@@ -1,0 +1,7 @@
+datasets>=3.0
+huggingface_hub>=0.30
+pillow>=10
+requests>=2.31
+python-dotenv>=1.0
+torch>=2.6
+bert-score>=0.3.13

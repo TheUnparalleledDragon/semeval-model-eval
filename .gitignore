@@ -1,0 +1,11 @@
+__pycache__/
+.pytest_cache/
+mmcqa_data/
+mmcqa_runs/
+.env
+.env.*
+!.env.example
+*.pyc
+.venv-local/
+local/data/
+local/runs/

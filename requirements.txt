@@ -1,0 +1,12 @@
+datasets>=3.0
+huggingface_hub>=0.30
+transformers>=5.13.0,<6
+accelerate>=1.2
+bitsandbytes>=0.45
+pillow>=10
+sentencepiece>=0.2
+einops>=0.8
+protobuf>=5
+bert-score>=0.3.13
+requests>=2.31
+python-dotenv>=1.0
