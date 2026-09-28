@@ -63,8 +63,13 @@ class ModelTests(unittest.TestCase):
                         if four_bit:
                             quant = kwargs["quantization_config"]
                             self.assertEqual(quant.bnb_4bit_compute_dtype, dtype)
-                            self.assertEqual(quant.llm_int8_skip_modules,
-                                             ["lm_head", *models.VISION_MODULES[key]])
+                            from transformers.quantizers.quantizers_utils import should_convert_module
+                            for name in models.VISION_MODULES[key]:
+                                for full_name in (f"{name}.patch_dense", f"model.{name}.patch_dense"):
+                                    self.assertFalse(should_convert_module(full_name, quant.llm_int8_skip_modules))
+                            self.assertFalse(should_convert_module("llm.lm_head", quant.llm_int8_skip_modules))
+                            self.assertTrue(should_convert_module("model.language_model.layers.0.q_proj",
+                                                                 quant.llm_int8_skip_modules))
                         else:
                             bnb.assert_not_called()
 

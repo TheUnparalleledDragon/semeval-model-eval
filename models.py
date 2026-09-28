@@ -53,7 +53,11 @@ def quantization_config(key, dtype):
 
     return BitsAndBytesConfig(
         load_in_4bit=True, bnb_4bit_quant_type="nf4", bnb_4bit_compute_dtype=dtype,
-        llm_int8_skip_modules=["lm_head", *VISION_MODULES[key]],
+        # Transformers matches parent exclusions from the start of the full
+        # module path. A bare 'embed_vision' does NOT exclude children named
+        # 'model.embed_vision.patch_dense'. Cover both native and remote layouts.
+        llm_int8_skip_modules=["lm_head", "llm.lm_head", *VISION_MODULES[key],
+                              *(f"model.{name}" for name in VISION_MODULES[key])],
     )
 
 
