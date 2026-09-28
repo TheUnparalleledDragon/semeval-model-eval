@@ -1,6 +1,7 @@
 """Edit MODEL_KEY to switch checkpoints; the remaining settings are shared."""
 
-MODEL_KEY = "internvl3_5_4b"
+# MODEL_KEY = "internvl3_5_4b"
+MODEL_KEY = "gemma_4_12b"
 
 # Select models on labeled dev, matching the released evaluation-style inputs.
 SPLITS = ("dev",)  # Add "train" only for later analysis or training.
@@ -12,7 +13,7 @@ ROBUSTNESS_SPLITS = ("dev",)
 
 OUTPUT_DIR = "/kaggle/working/mmcqa_runs"
 DATA_DIR = "/kaggle/working/mmcqa_data"
-MAX_ROWS_PER_TRACK = None  # Set to 5 for a smoke run; None runs every row.
+MAX_ROWS_PER_TRACK = 100  # Set to 5 for a smoke run; None runs every row.
 MAX_NEW_TOKENS = 128
 VISUAL_MAX_NEW_TOKENS = 512
 LOAD_IN_4BIT = True
