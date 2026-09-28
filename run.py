@@ -20,7 +20,7 @@ from pathlib import Path
 from PIL import Image
 
 import config
-from models import MODELS, MODEL_ADAPTER_VERSION, load_model
+from models import MODELS, MODEL_ADAPTER_VERSION, load_model, has_answer_text
 
 
 REPO = "QCRI/MMCQA-SemEval27"
@@ -125,7 +125,7 @@ def completed_keys(path):
             record = json.loads(line)
         except json.JSONDecodeError:
             continue  # A partially written final line can be retried.
-        if record.get("status") == "ok":
+        if record.get("status") == "ok" and has_answer_text(record.get("prediction")):
             done.add(row_key(record["track"], record["split"], record["id"], record["variant"], record.get("task", "qa")))
     return done
 
@@ -138,7 +138,8 @@ def summarize_records(path):
         except json.JSONDecodeError:
             continue
         key = row_key(record["track"], record["split"], record["id"], record["variant"], record.get("task", "qa"))
-        latest[key] = record["status"]
+        latest[key] = ("error" if record["status"] == "ok"
+                       and not has_answer_text(record.get("prediction")) else record["status"])
     totals = Counter(latest.values())
     by_track = {}
     for (track, split, _, variant, task), status in latest.items():
@@ -200,7 +201,7 @@ def main():
         "model_key": config.MODEL_KEY, "model_repo": MODELS[config.MODEL_KEY].repo,
         "model_revision": model_info.sha, "tracks": tracks, "splits": list(config.SPLITS),
         "model_adapter_version": MODEL_ADAPTER_VERSION,
-        "precision_policy": "native_bf16_else_fp16; language_nf4_if_enabled; vision_unquantized",
+        "precision_policy": "native_bf16_else_fp16; gemma_bf16_else_fp32; language_nf4_if_enabled; vision_unquantized",
         "variants": list(config.VARIANTS), "robustness_splits": list(config.ROBUSTNESS_SPLITS),
         "max_rows_per_track": config.MAX_ROWS_PER_TRACK,
         "max_new_tokens": config.MAX_NEW_TOKENS, "load_in_4bit": config.LOAD_IN_4BIT,
@@ -270,8 +271,8 @@ def main():
                                 prediction = runner.answer(
                                     image, prompt_for(row["question"]) if task == "qa" else VISUAL_PROMPT,
                                     config.MAX_NEW_TOKENS if task == "qa" else config.VISUAL_MAX_NEW_TOKENS)
-                            if not prediction:
-                                raise ValueError("Model returned an empty answer")
+                            if not has_answer_text(prediction):
+                                raise ValueError("Model returned empty or special-token-only answer text")
                         except Exception as exc:
                             status = "error"
                             out_of_memory = isinstance(exc, torch.cuda.OutOfMemoryError)

@@ -24,6 +24,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from local import config as settings
 from local.lmstudio import LMStudioClient
+from models import has_answer_text
 from run import (REPO, PROMPT_SUFFIX, VISUAL_PROMPT, TASKS, SCHEMA_VERSION, completed_keys,
                  discover_tracks, dump_json, ensure_images, image_for_variant,
                  prompt_for, row_key, summarize_records, utc_now)
@@ -196,8 +197,8 @@ def main():
                                 settings.SEED,
                                 reasoning_off=reasoning_off,
                             )
-                            if not prediction:
-                                raise ValueError("Model returned an empty answer")
+                            if not has_answer_text(prediction):
+                                raise ValueError("Model returned empty or special-token-only answer text")
                         except Exception as exc:
                             status = "error"
                             fatal = isinstance(exc, (requests.ConnectionError, requests.Timeout, requests.HTTPError))

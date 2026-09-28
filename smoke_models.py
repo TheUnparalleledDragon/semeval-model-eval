@@ -9,7 +9,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 
 import config
-from models import MODELS, MODEL_ADAPTER_VERSION, load_model
+from models import MODELS, MODEL_ADAPTER_VERSION, load_model, has_answer_text
 from run import VISUAL_PROMPT, prompt_for, utc_now
 
 
@@ -49,8 +49,8 @@ def main():
             result["compute_dtype"] = str(runner.dtype)
             for task, prompt, cap in checks:
                 prediction = runner.answer(image.copy(), prompt, cap)
-                if not prediction.strip():
-                    raise ValueError(f"{task}: empty answer")
+                if not has_answer_text(prediction):
+                    raise ValueError(f"{task}: empty or special-token-only answer")
                 result["checks"].append({"task": task, "prediction": prediction, "status": "ok"})
                 print(f"{key}/{task}: {prediction}", flush=True)
             result["status"] = "ok"

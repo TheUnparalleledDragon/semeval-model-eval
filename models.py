@@ -3,8 +3,9 @@
 from dataclasses import dataclass
 from importlib import metadata
 from contextlib import contextmanager, nullcontext
+import re
 
-MODEL_ADAPTER_VERSION = 2
+MODEL_ADAPTER_VERSION = 3
 
 
 @dataclass(frozen=True)
@@ -48,6 +49,36 @@ def cuda_compute_dtype():
     return torch.bfloat16 if native_bf16 else torch.float16
 
 
+def model_compute_dtype(key):
+    import torch
+
+    dtype = cuda_compute_dtype()
+    # FP16 has a much smaller numeric range than Gemma's native BF16.
+    # Keep NF4 storage but use FP32 arithmetic on T4/P100 for this checkpoint.
+    if key == "gemma_4_12b" and dtype == torch.float16:
+        return torch.float32
+    return dtype
+
+
+def has_answer_text(value):
+    """Reject empty/control-token-only output, including historical pad rows."""
+    if not isinstance(value, str):
+        return False
+    return bool(re.sub(r"<[^<>]*>", "", value).strip())
+
+
+class FiniteLogitsCheck:
+    """Stop numerical failures before greedy argmax turns NaNs into token 0."""
+    def __call__(self, input_ids, scores):
+        import torch
+
+        if (torch.isnan(scores).any() or torch.isposinf(scores).any()
+                or not torch.isfinite(scores).any(dim=-1).all()):
+            raise RuntimeError("Model produced non-finite generation scores (NaN/Inf). "
+                               "Check the compute dtype in manifest.json; do not score this output.")
+        return scores
+
+
 def quantization_config(key, dtype):
     from transformers import BitsAndBytesConfig
 
@@ -66,6 +97,7 @@ def inference_context(dtype):
     import torch
 
     autocast = (torch.autocast("cuda", dtype=dtype) if torch.cuda.is_available()
+                and dtype in (torch.float16, torch.bfloat16)
                 else nullcontext())
     with torch.inference_mode(), autocast:
         yield
@@ -139,7 +171,7 @@ def load_model(key, four_bit=True):
         raise RuntimeError("A CUDA GPU is required. In Kaggle, enable a GPU accelerator.")
     if four_bit:
         validate_quantization_dependency()
-    dtype = cuda_compute_dtype()
+    dtype = model_compute_dtype(key)
     print(f"Loading {key}: compute dtype={dtype}, language 4-bit={four_bit}; "
           "vision modules kept in floating precision", flush=True)
     if spec.backend == "pangea":
@@ -209,6 +241,8 @@ class MultimodalRunner:
         self.dtype = dtype
 
     def answer(self, image, prompt, max_new_tokens):
+        from transformers import LogitsProcessorList
+
         messages = [{"role": "user", "content": [
             {"type": "image", "image": image}, {"type": "text", "text": prompt}
         ]}]
@@ -221,13 +255,21 @@ class MultimodalRunner:
             self.model.device, dtype=self.dtype)
         length = inputs["input_ids"].shape[-1]
         with inference_context(self.dtype):
-            output = self.model.generate(**inputs, max_new_tokens=max_new_tokens, do_sample=False)
+            output = self.model.generate(**inputs, max_new_tokens=max_new_tokens, do_sample=False,
+                                        logits_processor=LogitsProcessorList([FiniteLogitsCheck()]))
         tokens = output[0][length:]
+        visible_text = self.processor.decode(tokens, skip_special_tokens=True).strip()
+        if not has_answer_text(visible_text):
+            raise ValueError("Model generated only padding/special tokens or empty text. "
+                             "This is a failed generation, not an answer.")
         if self.gemma:
             raw = self.processor.decode(tokens, skip_special_tokens=False)
             parsed = self.processor.parse_response(raw, prefix=inputs["input_ids"][0])
-            return clean_answer(parsed.get("content", ""))
-        return self.processor.decode(tokens, skip_special_tokens=True).strip()
+            answer = clean_answer(parsed.get("content", ""))
+            if not has_answer_text(answer):
+                raise ValueError("Gemma returned no answer text after response parsing")
+            return answer
+        return visible_text
 
 
 class PangeaRunner:

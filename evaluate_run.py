@@ -14,6 +14,7 @@ import statistics
 import sys
 from collections import Counter, defaultdict
 from pathlib import Path
+from models import has_answer_text
 
 
 VISUAL_FIELDS = ("visible_details", "text_in_image", "location_clues", "uncertain_inferences")
@@ -29,6 +30,9 @@ def latest_records(path):
             except json.JSONDecodeError:
                 continue
             key = (row["track"], row["split"], row["id"], row["variant"], row.get("task", "qa"))
+            if row.get("status") == "ok" and not has_answer_text(row.get("prediction")):
+                row = {**row, "status": "error", "error": {
+                    "type": "InvalidPrediction", "message": "Empty or special-token-only prediction"}}
             latest[key] = row
     return latest
 

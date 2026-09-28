@@ -10,6 +10,7 @@ import statistics
 from pathlib import Path
 
 from evaluate_run import parse_visual
+from models import has_answer_text
 
 
 def mean(values):
@@ -30,6 +31,8 @@ def load_run(path):
             except json.JSONDecodeError:
                 continue
             if row["split"] == "dev" and row["variant"] == "original":
+                if row["status"] == "ok" and not has_answer_text(row.get("prediction")):
+                    row = {**row, "status": "error"}
                 latest[(row["track"], row["id"], row["task"])] = row
     scores = {}
     with (path / "qa_scores.jsonl").open(encoding="utf-8") as source:

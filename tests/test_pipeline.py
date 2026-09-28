@@ -62,7 +62,7 @@ class PipelineContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "predictions.jsonl"
             rows = [
-                {"track": "qa_mena_en", "split": "dev", "id": "a", "variant": "original", "status": "ok"},
+                {"track": "qa_mena_en", "split": "dev", "id": "a", "variant": "original", "status": "ok", "prediction": "answer"},
                 {"track": "qa_mena_en", "split": "dev", "id": "b", "variant": "original", "status": "error"},
             ]
             path.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
@@ -75,7 +75,7 @@ class PipelineContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "predictions.jsonl"
             base = {"track": "qa_mena_en", "split": "dev", "id": "a", "variant": "original"}
-            path.write_text(json.dumps({**base, "task": "qa", "status": "ok"}) + "\n",
+            path.write_text(json.dumps({**base, "task": "qa", "status": "ok", "prediction": "answer"}) + "\n",
                             encoding="utf-8")
             self.assertIn(run.row_key("qa_mena_en", "dev", "a", "original", "qa"),
                           run.completed_keys(path))

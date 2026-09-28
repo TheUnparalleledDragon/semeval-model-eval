@@ -401,6 +401,8 @@ def evaluate_saved(path, model=JUDGE_MODEL, max_items=None, dry_run=False, judge
                "run_comparison_settings": {k: manifest.get(k) for k in (
                    "dataset_revision", "max_rows_per_track", "prompt_suffix", "visual_prompt",
                    "max_new_tokens", "visual_max_new_tokens")},
+               "inference_settings": {k: manifest.get(k) for k in (
+                   "backend", "model_adapter_version", "precision_policy", "compute_dtype", "load_in_4bit")},
                "judge_config": config, "judge_fingerprint": fingerprint,
                "validation_policy": "Conservative rubric normalization: never raise scores or promote verdicts; raw adjusted judgments preserved",
                "state": "judge_error" if stopped_early else "finished_with_judge_errors" if failure else "finished",

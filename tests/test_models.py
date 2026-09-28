@@ -30,6 +30,7 @@ class ModelTests(unittest.TestCase):
             for four_bit in (False, True):
                 for key, spec in models.MODELS.items():
                     with self.subTest(key=key, dtype=dtype, four_bit=four_bit):
+                        expected_dtype = torch.float32 if key == "gemma_4_12b" and dtype == torch.float16 else dtype
                         model = Mock()
                         model.eval.return_value = model
                         auto = Mock()
@@ -47,7 +48,7 @@ class ModelTests(unittest.TestCase):
                              patch("models.cuda_compute_dtype", return_value=dtype), \
                              patch("models.validate_quantization_dependency"), patch("builtins.print"):
                             runner = models.load_model(key, four_bit)
-                        self.assertEqual(runner.dtype, dtype)
+                        self.assertEqual(runner.dtype, expected_dtype)
                         if spec.backend == "pangea":
                             kwargs = builder.call_args.kwargs
                             self.assertNotIn("load_4bit", kwargs)
@@ -56,13 +57,13 @@ class ModelTests(unittest.TestCase):
                         else:
                             self.assertEqual(auto.from_pretrained.call_args.args[0], spec.repo)
                             kwargs = auto.from_pretrained.call_args.kwargs
-                            self.assertEqual(kwargs.get("dtype", kwargs.get("torch_dtype")), dtype)
+                            self.assertEqual(kwargs.get("dtype", kwargs.get("torch_dtype")), expected_dtype)
                         if spec.backend == "minicpm_o":
                             self.assertFalse(kwargs["init_audio"])
                             self.assertFalse(kwargs["init_tts"])
                         if four_bit:
                             quant = kwargs["quantization_config"]
-                            self.assertEqual(quant.bnb_4bit_compute_dtype, dtype)
+                            self.assertEqual(quant.bnb_4bit_compute_dtype, expected_dtype)
                             from transformers.quantizers.quantizers_utils import should_convert_module
                             for name in models.VISION_MODULES[key]:
                                 for full_name in (f"{name}.patch_dense", f"model.{name}.patch_dense"):
@@ -120,6 +121,46 @@ class ModelTests(unittest.TestCase):
                 runner = models.MultimodalRunner(model, processor, True, dtype)
                 with patch("torch.cuda.is_available", return_value=False):
                     self.assertEqual(runner.answer(Image.new("RGB", (4, 4)), "question", 16), "answer")
+
+    def test_nonfinite_logits_stop_instead_of_generating_pad(self):
+        check = models.FiniteLogitsCheck()
+        ids = torch.tensor([[1, 2]])
+        for scores in ([[float("nan"), 0.0]], [[float("inf"), 0.0]],
+                       [[float("-inf"), float("-inf")]]):
+            with self.subTest(scores=scores), self.assertRaisesRegex(RuntimeError, "non-finite"):
+                check(ids, torch.tensor(scores))
+        valid = torch.tensor([[float("-inf"), 1.0]])
+        self.assertIs(check(ids, valid), valid)
+
+    def test_gemma_rejects_pad_even_if_raw_parser_would_return_it(self):
+        processor = Mock()
+        processor.apply_chat_template.return_value = BatchFeature({"input_ids": torch.tensor([[1, 2]])})
+        processor.decode.side_effect = lambda *a, **kw: "" if kw["skip_special_tokens"] else "<pad><pad>"
+        processor.parse_response.return_value = {"content": "<pad><pad>"}
+        model = Mock(device=torch.device("cpu"))
+        model.generate.return_value = torch.tensor([[1, 2, 0, 0]])
+        runner = models.MultimodalRunner(model, processor, True, torch.float32)
+        with patch("torch.cuda.is_available", return_value=False), self.assertRaisesRegex(ValueError, "only padding"):
+            runner.answer(Image.new("RGB", (4, 4)), "question", 16)
+        processor.parse_response.assert_not_called()
+
+    def test_fp32_fallback_does_not_enable_cuda_half_autocast(self):
+        with patch("torch.cuda.is_available", return_value=True), patch("torch.autocast") as autocast:
+            with models.inference_context(torch.float32):
+                pass
+            autocast.assert_not_called()
+
+    def test_historical_pad_rows_are_retried_and_excluded_from_scores(self):
+        from evaluate_run import latest_records
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "predictions.jsonl"
+            base = {"track": "qa_mena_en", "split": "dev", "variant": "original", "task": "qa", "status": "ok"}
+            rows = [{**base, "id": "pad", "prediction": "<pad>" * 128},
+                    {**base, "id": "valid", "prediction": "Hassan II Mosque"}]
+            path.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            self.assertEqual(run.completed_keys(path), {run.row_key("qa_mena_en", "dev", "valid", "original", "qa")})
+            self.assertEqual(run.summarize_records(path)[0], {"error": 1, "ok": 1})
+            self.assertEqual(latest_records(path)[run.row_key("qa_mena_en", "dev", "pad", "original", "qa")]["status"], "error")
 
     def test_minicpm_uses_backend_sampling_switch_and_fresh_history(self):
         for backend in ("minicpm_v", "minicpm_o"):
