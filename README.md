@@ -12,6 +12,7 @@ The [task definition](https://mmcultureqa-semeval27.github.io/tasks/) asks for a
 | --- | --- |
 | [`config.py`](config.py) | Kaggle settings; change `MODEL_KEY` to select a Hugging Face checkpoint. |
 | [`models.py`](models.py) | Checkpoint registry and model-specific multimodal loaders. |
+| [`smoke_models.py`](smoke_models.py) | GPU smoke check: load a checkpoint and make independent English QA, Arabic QA, and visual requests. |
 | [`run.py`](run.py) | Kaggle runner **and** shared track discovery, image download/variants, prompt, output, and resume helpers. |
 | [`requirements.txt`](requirements.txt) | Kaggle Python dependencies. |
 | [`local/config.py`](local/config.py) | Mac settings; change `MODEL_ID` to the exact LM Studio ID. |
@@ -35,16 +36,16 @@ The visual prompt asks for visual evidence that could help a future two-model sy
 
 | `MODEL_KEY` | Original Hugging Face checkpoint | Loader | Practical note |
 | --- | --- | --- | --- |
-| `internvl3_5_4b` | [OpenGVLab/InternVL3_5-4B](https://huggingface.co/OpenGVLab/InternVL3_5-4B) | Transformers pipeline | Remote model code |
-| `qwen3_vl_8b` | [Qwen/Qwen3-VL-8B-Instruct](https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct) | Transformers pipeline | Recent Transformers required |
-| `aya_vision_8b` | [CohereLabs/aya-vision-8b](https://huggingface.co/CohereLabs/aya-vision-8b) | Transformers pipeline | Gated: accept license and use an HF token |
+| `internvl3_5_4b` | [OpenGVLab/InternVL3_5-4B-HF](https://huggingface.co/OpenGVLab/InternVL3_5-4B-HF) | Native multimodal processor | Official Transformers format; avoids the custom `.chat()` checkpoint |
+| `qwen3_vl_8b` | [Qwen/Qwen3-VL-8B-Instruct](https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct) | Native multimodal processor | Recent Transformers required |
+| `aya_vision_8b` | [CohereLabs/aya-vision-8b](https://huggingface.co/CohereLabs/aya-vision-8b) | Native multimodal processor | Gated: accept license and use an HF token |
 | `culturalpangea_7b` | [neulab/CulturalPangea-7B](https://huggingface.co/neulab/CulturalPangea-7B) | LLaVA-NeXT | Extra install; see below |
 | `minicpm_o_4_5` | [openbmb/MiniCPM-o-4_5](https://huggingface.co/openbmb/MiniCPM-o-4_5) | Native image chat | Audio/TTS modules disabled |
 | `minicpm_v_4_5` | [openbmb/MiniCPM-V-4_5](https://huggingface.co/openbmb/MiniCPM-V-4_5) | Native image chat | Image model option for the “o/V” choice |
 | `gemma_4_12b` | [google/gemma-4-12B-it](https://huggingface.co/google/gemma-4-12B-it) | Native multimodal processor | Larger GPU footprint; response parser removes reasoning tags |
 | `qwen3_8_27b` | [Qwen/Qwen3.8-27B](https://huggingface.co/Qwen/Qwen3.8-27B) | Native multimodal processor | 27B; may exceed free Kaggle GPU memory even in 4-bit |
 
-All loaders aim at the original full checkpoints. `LOAD_IN_4BIT=True` uses bitsandbytes NF4 at runtime to reduce memory; this is not a different published model. Keep this setting identical across runs. Inference is greedy (`do_sample=False`); QA has a 128-token cap and visual description has a separate 512-token cap. A model can still use a different internal image resolution or chat template; those are checkpoint-specific.
+The loaders use the publishers' checkpoints; InternVL uses the publisher's `-HF` conversion. `LOAD_IN_4BIT=True` applies bitsandbytes NF4 to language layers at runtime; vision encoders and connectors remain in floating precision. The output head also stays unquantized. Keep this setting identical across runs. GPU compute uses BF16 only if **every visible CUDA GPU has native BF16 support** (compute capability 8 or higher), otherwise FP16, including Kaggle T4/P100. Processor image tensors are cast to this precision while token IDs, masks, and image positions keep their integer types. CUDA inference uses autocast to handle mixed floating modules safely. Inference is greedy; MiniCPM-V uses its native `sampling=False` switch with one beam, and MiniCPM-o uses `do_sample=False` with one beam. Thinking is disabled through the checkpoints' chat templates/APIs. QA has a 128-token cap and visual description has a separate 512-token cap. A model can still use a different internal image resolution or chat template; those are checkpoint-specific.
 
 **Important limit:** the code paths were checked against the model cards, but these multi-GB checkpoints have **not all been executed on a Kaggle GPU**. A completed smoke run is required before claiming that a checkpoint works on your specific GPU. CulturalPangea has an older custom LLaVA-NeXT dependency and is the most likely to need environment adjustment. The 27B checkpoint may exceed both free Kaggle disk and GPU memory. Model-loading failures are written to `status.json`.
 
@@ -62,10 +63,29 @@ All loaders aim at the original full checkpoints. `LOAD_IN_4BIT=True` uses bitsa
 3. Install once in the fresh session:
 
    ```bash
-   pip install -r requirements.txt
+   python -m pip install --upgrade -r requirements.txt
    ```
 
    Kaggle already supplies CUDA PyTorch. If the install changes PyTorch, restart the notebook kernel before running inference. Internet is needed to download images and model weights. The runner downloads **images only**; the dataset's audio archives are not needed.
+
+   In a notebook code cell, use `%pip install --upgrade -r requirements.txt`. Four-bit inference requires **bitsandbytes >= 0.46.1** with the supported Transformers versions. The earlier `>=0.45` requirement could leave an incompatible Kaggle installation in place. To repair that error in an existing notebook, run `%pip install --upgrade "bitsandbytes>=0.46.1"`. If Transformers/bitsandbytes was already imported in the kernel, restart the kernel and rerun the HF-token setup cell before inference. The model loader checks the dependency version before requesting model assets. Transformers still checks that the installed package's backend supports the CUDA environment.
+
+   If Transformers says it does not recognize the checkpoint architecture, update the same notebook environment:
+
+   ```python
+   %pip install --upgrade "transformers>=5.13.0,<6" "bitsandbytes>=0.46.1" accelerate
+   ```
+
+   Restart the kernel, rerun your HF-token setup cell, and verify before loading Gemma:
+
+   ```python
+   import transformers
+   from transformers import AutoConfig
+   print(transformers.__version__, transformers.__file__)
+   print(AutoConfig.for_model("gemma4_unified").model_type)
+   ```
+
+   Gemma 4 12B uses `gemma4_unified` (not the `gemma4` architecture used by other family members). [Transformers 5.13.0 already includes this configuration](https://github.com/huggingface/transformers/blob/v5.13.0/src/transformers/models/auto/auto_mappings.py); a source install is unnecessary for this checkpoint. The loader reports the running version and its file path if support is missing. The final generic upgrade paragraph alone does not identify an error: if this check succeeds but loading still fails, retain the entire traceback, especially the first exception and the unrecognized architecture name.
 
 4. In `config.py`, edit the first setting:
 
@@ -84,6 +104,23 @@ All loaders aim at the original full checkpoints. `LOAD_IN_4BIT=True` uses bitsa
 6. The checked-in selection run uses every released `qa_*` track on **original dev** images: **4,000 images × 2 independent tasks = 8,000 requests** per model. It can still exceed a free Kaggle session. Results flush after every request. Save/download the run directory and image cache to resume in another session. Keep the same settings for every model. For later analysis, adding train and the optional JPEG dev probe would make **96,000 requests** per model on the current release. If interrupted, rerun the same configuration and dataset/model revisions; successful task requests are skipped.
 
 7. For each next checkpoint, change `MODEL_KEY` and repeat in a fresh notebook session. Keep `SPLITS`, `TRACKS`, `VARIANTS`, prompt, token cap, and 4-bit choice fixed for a fair comparison.
+
+### Diagnose loading and Float/BFloat16 errors before a full run
+
+After updating project files and installing the requirements, restart the Kaggle kernel to release the old model and imported modules. From the project directory run:
+
+```bash
+python smoke_models.py --model gemma_4_12b
+python run.py
+```
+
+The smoke script creates a red-square image and runs three fresh requests: English QA, Arabic QA, and visual JSON. It writes answers or a full failure traceback to `model_smoke_results.json` and exits with an error if loading or any request fails. This verifies the runtime path; inspect the answers to verify image use. For a real image, add `--image /kaggle/working/example.jpg`. Set `--output /kaggle/working/gemma_smoke.json` to retain a separate report. `--all` tests all eight registry entries sequentially, with substantial downloads; separate fresh sessions using `--model <MODEL_KEY>` are preferable for custom dependencies and limited disk space. `--no-four-bit` tests an unquantized load only when enough GPU memory is available. The smoke script does not download the dataset, run BERTScore, or write benchmark predictions.
+
+The former Gemma 4 loader quantized its vision patch projection. Packed weights have an integer dtype, so Gemma's internal input-dtype inference could leave pixels in Float32 while adjacent LayerNorm weights were BF16/FP16. Adapter version 2 keeps `embed_vision` unquantized and casts processor floating inputs before generation. The same policy protects the other registered vision encoders/connectors. CulturalPangea also uses `process_images` for its configured resolution strategy and sends pixels in its vision tower's own dtype/device.
+
+The Kaggle runner now stops after **three consecutive prediction errors**, or immediately on GPU OOM, and records `inference_error` plus a full traceback in `status.json`. Attempted rows are flushed to `predictions.jsonl`; rerunning the same configuration skips successful requests and retries errors. Adapter version 2 is part of the run fingerprint: the upgrade starts a **new run directory** so earlier precision/loader settings cannot silently mix with new predictions. Previous run directories and scores remain available. `manifest.json` records the adapter version, precision policy, and actual compute dtype. Recreate selection runs using the same adapter version before comparing checkpoints.
+
+Local verification uses `python -m unittest discover -s tests -q`: tests cover all eight loader routes in FP16/BF16 with/without 4-bit configuration, actual small Gemma vision tensors reproducing the old mismatch, integer input preservation, MiniCPM sampling controls, CulturalPangea preprocessing, and saving progress when inference fails repeatedly. These checks do not load the full GPU checkpoints; the Kaggle smoke check remains required for your runtime.
 
 ### CulturalPangea extra installation
 
@@ -120,7 +157,7 @@ The local path uses an **image-capable model already downloaded and loaded in LM
 
 4. Inspect `status.json`, `evaluation.json`, and a few image-grounded answers in `predictions.jsonl`. Rerunning the same settings skips successful answers and retries failures. Change only `MODEL_ID` to test the next locally available model; keep splits, track selection, row limit, variants, prompt, and token caps consistent across runs.
 
-**Current checked-in Mac settings:** `MODEL_ID = "google/gemma-4-e4b"`, `SPLITS = ("dev",)`, `VARIANTS = ("original",)`, and `MAX_ROWS_PER_TRACK = 2`. With four current tracks and two tasks, that is a **16-request smoke run**. Set `MAX_ROWS_PER_TRACK = None` for the full dev selection run: **4,000 images × 2 = 8,000 requests**. The Kaggle config currently selects `internvl3_5_4b`, dev/original, and no row limit.
+**Current checked-in settings:** both Mac and Kaggle use dev/original and `MAX_ROWS_PER_TRACK = 100`. Mac selects `google/gemma-4-e4b`; Kaggle selects `gemma_4_12b`. With four current tracks and two tasks, this is **800 requests** per model. Use `2` for a dataset smoke run or `None` for the full dev selection run: **4,000 images × 2 = 8,000 requests**.
 
 The initial Gemma smoke attempt failed because LM Studio spent the 128-token allowance on `reasoning_content` and returned empty answer text with `finish_reason: "length"`. The local runner now checks the model's capabilities and uses LM Studio's [native chat endpoint](https://lmstudio.ai/docs/developer/rest/chat) with `reasoning: "off"` when supported. It records the endpoint and reasoning mode in the manifest; the native endpoint's seed is `null` because that API has no documented seed control. The old failed run folder is historical, and a changed reasoning setting gets a new run ID. If LM Studio does not expose capability metadata, disable thinking for that model in LM Studio and verify the returned answers. A connection failure or three consecutive failed answers stops the run after saving attempted records. See the [local guide](local/README.md) for further diagnosis.
 

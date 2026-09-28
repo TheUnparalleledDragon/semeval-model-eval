@@ -20,7 +20,7 @@ from pathlib import Path
 from PIL import Image
 
 import config
-from models import MODELS, load_model
+from models import MODELS, MODEL_ADAPTER_VERSION, load_model
 
 
 REPO = "QCRI/MMCQA-SemEval27"
@@ -156,6 +156,7 @@ def make_run_id(dataset_revision, model_revision):
         "four_bit": config.LOAD_IN_4BIT, "seed": config.SEED, "prompt": PROMPT_SUFFIX,
         "visual_prompt": VISUAL_PROMPT, "tasks": TASKS,
         "visual_max_new_tokens": config.VISUAL_MAX_NEW_TOKENS,
+        "model_adapter_version": MODEL_ADAPTER_VERSION,
     }
     return hashlib.sha256(json.dumps(material, sort_keys=True).encode()).hexdigest()[:12]
 
@@ -198,6 +199,8 @@ def main():
         "dataset_repo": REPO, "dataset_revision": revision,
         "model_key": config.MODEL_KEY, "model_repo": MODELS[config.MODEL_KEY].repo,
         "model_revision": model_info.sha, "tracks": tracks, "splits": list(config.SPLITS),
+        "model_adapter_version": MODEL_ADAPTER_VERSION,
+        "precision_policy": "native_bf16_else_fp16; language_nf4_if_enabled; vision_unquantized",
         "variants": list(config.VARIANTS), "robustness_splits": list(config.ROBUSTNESS_SPLITS),
         "max_rows_per_track": config.MAX_ROWS_PER_TRACK,
         "max_new_tokens": config.MAX_NEW_TOKENS, "load_in_4bit": config.LOAD_IN_4BIT,
@@ -234,8 +237,11 @@ def main():
                                 "error_type": type(exc).__name__, "error": str(exc),
                                 "updated_utc": utc_now()})
         raise
+    manifest["compute_dtype"] = str(runner.dtype)
+    dump_json(manifest_path, manifest)
     dump_json(status_path, {"run_id": run_id, "state": "running", "updated_utc": utc_now()})
     counts = Counter()
+    consecutive_errors = 0
     with records_path.open("a", encoding="utf-8") as sink:
         for track in tracks:
             for split in config.SPLITS:
@@ -270,7 +276,7 @@ def main():
                             status = "error"
                             out_of_memory = isinstance(exc, torch.cuda.OutOfMemoryError)
                             error = {"type": type(exc).__name__, "message": str(exc),
-                                     "traceback": traceback.format_exc(limit=5)}
+                                     "traceback": traceback.format_exc()}
                         record = {
                             "schema_version": SCHEMA_VERSION, "run_id": run_id,
                             "dataset_revision": revision, "model_key": config.MODEL_KEY,
@@ -290,11 +296,18 @@ def main():
                         sink.flush()
                         counts[status] += 1
                         if status == "ok":
+                            consecutive_errors = 0
                             done.add(row_key(track, split, row_id, variant, task))
                         if status == "error":
+                            consecutive_errors += 1
                             print(f"ERROR {track}/{split}/{row_id}/{variant}/{task}: {error['message']}", flush=True)
-                            if out_of_memory:
-                                raise RuntimeError("GPU out of memory; progress is saved. Resume with a larger GPU or a smaller model.")
+                            if out_of_memory or consecutive_errors >= 3:
+                                dump_json(status_path, {"run_id": run_id, "state": "inference_error",
+                                    "counts_this_session": dict(counts), "error": error,
+                                    "updated_utc": utc_now()})
+                                message = ("GPU out of memory; use a larger GPU or smaller model."
+                                           if out_of_memory else "Three consecutive prediction failures; check status.json for the full traceback.")
+                                raise RuntimeError(message + " Progress is saved; rerun to resume successful tasks.")
                     if (index + 1) % 100 == 0:
                         print(f"{track}/{split}: {index + 1} rows, {dict(counts)}", flush=True)
     total_counts, by_track = summarize_records(records_path)

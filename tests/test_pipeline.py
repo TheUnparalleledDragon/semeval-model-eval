@@ -3,14 +3,44 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
+from importlib import metadata
 
 from PIL import Image
 
 import run
-from models import clean_answer
+from models import clean_answer, validate_quantization_dependency, validate_transformers_dependency
 
 
 class PipelineContractTests(unittest.TestCase):
+    def test_transformers_preflight_rejects_old_and_missing_gemma_support(self):
+        old = SimpleNamespace(__version__="4.57.0", __file__="/test/transformers/__init__.py")
+        with patch.dict("sys.modules", {"transformers": old}):
+            with self.assertRaisesRegex(RuntimeError, "requires Transformers>=5.13.0"):
+                validate_transformers_dependency("gemma_4_12b")
+        from unittest.mock import Mock
+        current = SimpleNamespace(__version__="5.13.0", __file__="/test/transformers/__init__.py",
+                                  AutoConfig=Mock())
+        current.AutoConfig.for_model.side_effect = ValueError("unknown architecture")
+        with patch.dict("sys.modules", {"transformers": current}):
+            with self.assertRaisesRegex(RuntimeError, "gemma4_unified architecture"):
+                validate_transformers_dependency("gemma_4_12b")
+        current.AutoConfig.for_model.side_effect = None
+        with patch.dict("sys.modules", {"transformers": current}):
+            validate_transformers_dependency("gemma_4_12b")
+
+    def test_quantization_dependency_rejects_missing_and_old_versions(self):
+        with patch("models.metadata.version", return_value="0.45.5"):
+            with self.assertRaisesRegex(RuntimeError, "bitsandbytes>=0.46.1"):
+                validate_quantization_dependency()
+        with patch("models.metadata.version", side_effect=metadata.PackageNotFoundError("bitsandbytes")):
+            with self.assertRaisesRegex(RuntimeError, "installed: missing"):
+                validate_quantization_dependency()
+
+    def test_quantization_dependency_accepts_required_version(self):
+        with patch("models.metadata.version", return_value="0.46.1"):
+            validate_quantization_dependency()
+
     def test_discovers_only_text_qa_tracks(self):
         files = [SimpleNamespace(rfilename=name) for name in (
             "qa/mena/train_en.parquet", "qa/mena/dev_en.parquet",
