@@ -1,7 +1,7 @@
 """Edit MODEL_KEY to switch checkpoints; the remaining settings are shared."""
 
 # MODEL_KEY = "internvl3_5_4b"
-MODEL_KEY = "Qwen3_5_9B"
+MODEL_KEY = "qwen3_5_9B"
 
 # Select models on labeled dev, matching the released evaluation-style inputs.
 SPLITS = ("dev",)  # Add "train" only for later analysis or training.
