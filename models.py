@@ -24,7 +24,7 @@ MODELS = {
     "minicpm_v_4_5": ModelSpec("openbmb/MiniCPM-V-4_5", backend="minicpm_v", trust_remote_code=True),
     "gemma_4_12b": ModelSpec("google/gemma-4-12B-it", backend="multimodal"),
     "qwen3_8_27b": ModelSpec("Qwen/Qwen3.8-27B", backend="multimodal"),
-    "qwen3_5_9b": ModelSpec("Qwen/Qwen3.5-9B", backend="multimodal")
+    "qwen3_5_9b": ModelSpec("Qwen/Qwen3.5-9B", backend="multimodal"),
 }
 
 # Quantize language layers, retaining the vision encoder and connector in the
@@ -38,6 +38,8 @@ VISION_MODULES = {
     "minicpm_v_4_5": ("vpm", "resampler"),
     "gemma_4_12b": ("embed_vision",),
     "qwen3_8_27b": ("visual",),
+    "qwen3_5_9b": ("visual",),
+    
 }
 
 
@@ -151,7 +153,7 @@ def validate_transformers_dependency(key):
     architecture = {
         "gemma_4_12b": "gemma4_unified", "qwen3_8_27b": "qwen3_5",
         "qwen3_vl_8b": "qwen3_vl", "internvl3_5_4b": "internvl",
-        "aya_vision_8b": "aya_vision",
+        "aya_vision_8b": "aya_vision","qwen3_5_9b": "qwen3_5",
     }.get(key)
     if architecture:
         try:
