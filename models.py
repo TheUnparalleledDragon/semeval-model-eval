@@ -24,7 +24,7 @@ MODELS = {
     "minicpm_v_4_5": ModelSpec("openbmb/MiniCPM-V-4_5", backend="minicpm_v", trust_remote_code=True),
     "gemma_4_12b": ModelSpec("google/gemma-4-12B-it", backend="multimodal"),
     "qwen3_8_27b": ModelSpec("Qwen/Qwen3.8-27B", backend="multimodal"),
-    "qwen3_5_9B": ModelSpec("Qwen/Qwen3.5-9B", backend="multimodal")
+    "qwen3_5_9b": ModelSpec("Qwen/Qwen3.5-9B", backend="multimodal")
 }
 
 # Quantize language layers, retaining the vision encoder and connector in the
